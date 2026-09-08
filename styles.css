@@ -15,6 +15,11 @@
 
 * { box-sizing: border-box; }
 
+/* Ensure the `hidden` attribute always wins, even over class rules that set
+   `display` (e.g. .modal { display: flex }). Without this the detail modal
+   stays visible on plain hosting. */
+[hidden] { display: none !important; }
+
 body {
   margin: 0;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
