@@ -7,8 +7,10 @@
 //   npx wrangler secret put GEMINI_API_KEY
 // It lives only in the Worker runtime and is never sent to the browser.
 
-// Gemini free-tier model. Change if you like — see https://ai.google.dev/gemini-api/docs/models
-const MODEL = "gemini-2.0-flash";
+// Gemini free-tier models, tried in order — the first one this API key supports is used
+// (a 404 means "not available to this key", so we fall through to the next).
+// See https://ai.google.dev/gemini-api/docs/models
+const MODELS = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-flash-latest", "gemini-1.5-flash"];
 
 const MAX_TRANSCRIPT_CHARS = 120_000;
 const MAX_ITEMS = 40;
@@ -120,13 +122,19 @@ export default {
 
     // ---- Call Gemini -------------------------------------------------------
     let parsed;
+    let usedModel = MODELS[0];
     try {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`;
-      const resp = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-goog-api-key": env.GEMINI_API_KEY },
-        body: JSON.stringify(geminiBody),
-      });
+      let resp;
+      for (const m of MODELS) {
+        usedModel = m;
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent`;
+        resp = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-goog-api-key": env.GEMINI_API_KEY },
+          body: JSON.stringify(geminiBody),
+        });
+        if (resp.status !== 404) break; // model unavailable for this key — try the next
+      }
 
       if (!resp.ok) {
         const detail = await resp.text();
@@ -153,7 +161,7 @@ export default {
     }
 
     const scores = normalizeScores(parsed, cleanItems);
-    return json({ model: MODEL, scores }, 200, env);
+    return json({ model: usedModel, scores }, 200, env);
   },
 };
 

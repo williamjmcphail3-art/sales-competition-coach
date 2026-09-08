@@ -146,7 +146,8 @@ Defaults are permissive so it works immediately. For a real competition:
 
 ## Changing things
 
-- **AI model:** edit `MODEL` in `worker/worker.js` (default `gemini-2.0-flash`). Model list:
+- **AI model:** edit the `MODELS` list in `worker/worker.js` — the Worker tries them in
+  order and uses the first one your API key supports. Model list:
   https://ai.google.dev/gemini-api/docs/models
 - **Rubric wording, points, or what's AI-scored:** edit `rubric.js` — the single source of
   truth for both the inputs the page renders and the items sent to the AI.

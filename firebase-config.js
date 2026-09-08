@@ -22,4 +22,4 @@ export const firebaseConfig = {
 
 // The URL of your deployed Cloudflare Worker (the AI scoring backend).
 // After `npx wrangler deploy`, paste the printed *.workers.dev URL here (no trailing slash).
-export const aiEndpoint = "https://YOUR-WORKER.workers.dev";
+export const aiEndpoint = "https://sales-competition-coach.williamjmcphail3.workers.dev";
