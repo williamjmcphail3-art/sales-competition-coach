@@ -1,0 +1,17 @@
+{
+  "rules": {
+    ".read": true,
+    "contestants": {
+      ".write": true,
+      "$id": {
+        ".validate": "newData.hasChild('name')"
+      }
+    },
+    "scores": {
+      ".write": true,
+      "$id": {
+        ".validate": "newData.hasChild('contestantId') && newData.hasChild('total')"
+      }
+    }
+  }
+}

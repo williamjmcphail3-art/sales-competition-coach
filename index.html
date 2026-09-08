@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sales Competition Coach — Live Scoring</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <h1>Sales Competition Coach</h1>
+      <nav class="tabs">
+        <button class="tab active" data-tab="leaderboard">Leaderboard</button>
+        <button class="tab" data-tab="score">Score a pitch</button>
+      </nav>
+    </header>
+
+    <main>
+      <!-- ===================== LEADERBOARD ===================== -->
+      <section id="leaderboard" class="panel active">
+        <div class="panel-head">
+          <h2>Leaderboard</h2>
+          <p class="muted">Live — updates for everyone as scores are saved.</p>
+        </div>
+        <div class="table-wrap">
+          <table class="board">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Contestant</th>
+                <th class="num">Avg score</th>
+                <th class="num">/ 290</th>
+                <th class="num">Entries</th>
+                <th class="num">Best</th>
+              </tr>
+            </thead>
+            <tbody id="board-body">
+              <tr><td colspan="6" class="muted center">Connecting…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ===================== SCORE A PITCH ===================== -->
+      <section id="score" class="panel">
+        <div class="panel-head">
+          <h2>Score a pitch</h2>
+        </div>
+
+        <div class="row">
+          <label class="field">
+            <span>Judge</span>
+            <input id="judge-name" type="text" placeholder="Your name" autocomplete="name" />
+          </label>
+
+          <label class="field">
+            <span>Contestant</span>
+            <select id="contestant-select">
+              <option value="">— select —</option>
+            </select>
+          </label>
+
+          <div class="field new-contestant">
+            <span>Add contestant</span>
+            <div class="inline">
+              <input id="new-contestant" type="text" placeholder="New contestant name" />
+              <button id="add-contestant" type="button" class="secondary">Add</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- AI scoring -->
+        <div class="ai-box">
+          <div class="ai-head">
+            <h3>Score from transcript <span class="badge">AI-assisted</span></h3>
+            <p class="muted">
+              Paste or upload a pitch transcript and the AI will suggest a 0–10 for
+              every item it can judge from the words. Non-verbal items stay blank for
+              you to score by hand. Every number is editable before you save.
+            </p>
+          </div>
+          <textarea
+            id="transcript"
+            rows="8"
+            placeholder="Paste the full pitch transcript here…"
+          ></textarea>
+          <div class="ai-actions">
+            <label class="file-label secondary">
+              Upload .txt
+              <input id="transcript-file" type="file" accept=".txt,text/plain" hidden />
+            </label>
+            <button id="run-ai" type="button" class="primary">Score from transcript</button>
+            <span id="ai-status" class="ai-status" role="status" aria-live="polite"></span>
+          </div>
+          <p class="cost-note muted">
+            Each click sends the transcript to the free AI scoring service to grade it.
+          </p>
+        </div>
+
+        <!-- Rubric inputs (rendered by app.js) -->
+        <form id="rubric-form">
+          <div id="rubric-container"></div>
+
+          <label class="field wide">
+            <span>Notes (optional)</span>
+            <textarea id="score-notes" rows="2" placeholder="Anything worth recording with this score…"></textarea>
+          </label>
+
+          <div class="save-bar">
+            <div class="total-live">
+              Total: <strong id="total-live">0</strong> / <span id="total-max">290</span>
+            </div>
+            <button id="save-score" type="submit" class="primary">Save score</button>
+            <span id="save-status" class="ai-status" role="status" aria-live="polite"></span>
+          </div>
+        </form>
+      </section>
+    </main>
+
+    <!-- Contestant detail (opened by clicking a leaderboard row) -->
+    <div id="detail-modal" class="modal" hidden>
+      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="detail-title">
+        <div class="modal-head">
+          <h2 id="detail-title">Contestant</h2>
+          <button id="detail-close" class="secondary" aria-label="Close">✕</button>
+        </div>
+        <div id="detail-body" class="modal-body"></div>
+      </div>
+    </div>
+
+    <div id="config-warning" class="config-warning" hidden>
+      <strong>Firebase isn't configured yet.</strong>
+      Edit <code>firebase-config.js</code> with your project's values, then reload.
+    </div>
+
+    <script type="module" src="app.js"></script>
+  </body>
+</html>
