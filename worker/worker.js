@@ -1,15 +1,16 @@
-// worker.js — Cloudflare Worker: score a sales-pitch transcript with Google Gemini.
+// worker.js — Cloudflare Worker: AI scoring + coaching for the Sales Competition site.
 //
-// The browser POSTs { transcript, items } here; the Worker calls Gemini's free tier
-// and returns a 0–10 score + one-sentence justification per item.
+// Two POST modes (JSON body):
+//   default:       { transcript, items:[{key,label,help}] }        -> { scores }
+//   coach:         { mode:"coach", contestantName,
+//                    items:[{label,score,justification,manual}] }  -> { narrative }
 //
-// Your Gemini API key is stored as a Worker SECRET (GEMINI_API_KEY) — set with:
-//   npx wrangler secret put GEMINI_API_KEY
+// Your Gemini API key is a Worker SECRET (GEMINI_API_KEY) — set with:
+//   npx wrangler secret put GEMINI_API_KEY   (or in the dashboard → Settings → Variables)
 // It lives only in the Worker runtime and is never sent to the browser.
 
 // Gemini free-tier models, tried in order — the first one this API key supports is used
 // (a 404 means "not available to this key", so we fall through to the next).
-// See https://ai.google.dev/gemini-api/docs/models
 const MODELS = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-flash-latest", "gemini-1.5-flash"];
 
 const MAX_TRANSCRIPT_CHARS = 120_000;
@@ -28,6 +29,44 @@ function json(body, status, env) {
     status,
     headers: { "Content-Type": "application/json", ...corsHeaders(env) },
   });
+}
+
+// Call Gemini with model fallback + retry on transient overload.
+// Returns { resp, model }; resp may be !ok (the caller decides what to do).
+async function callGemini(env, geminiBody) {
+  const RETRYABLE = new Set([429, 500, 502, 503]);
+  let resp;
+  let usedModel = MODELS[0];
+  outer: for (const m of MODELS) {
+    usedModel = m;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent`;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      resp = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-goog-api-key": env.GEMINI_API_KEY },
+        body: JSON.stringify(geminiBody),
+      });
+      if (resp.status === 404) break; // model unavailable for this key — try the next model
+      if (resp.ok) return { resp, model: usedModel };
+      if (RETRYABLE.has(resp.status) && attempt < 2) {
+        await new Promise((r) => setTimeout(r, 800 * (attempt + 1)));
+        continue;
+      }
+      return { resp, model: usedModel };
+    }
+  }
+  return { resp, model: usedModel };
+}
+
+// Turn a failed Gemini Response into a friendly JSON error Response.
+function geminiError(resp, env) {
+  if (resp.status === 429 || resp.status === 503) {
+    return json({ error: "The AI is busy right now (free-tier limit) — wait a few seconds and try again." }, 503, env);
+  }
+  if (resp.status === 400 || resp.status === 403) {
+    return json({ error: "Gemini rejected the request — check the GEMINI_API_KEY secret." }, 502, env);
+  }
+  return json({ error: `Gemini error ${resp.status}.` }, 502, env);
 }
 
 export default {
@@ -49,130 +88,151 @@ export default {
       return json({ error: "Body must be JSON." }, 400, env);
     }
 
-    const { transcript, items } = data || {};
-
-    // ---- Validate ----------------------------------------------------------
-    if (typeof transcript !== "string" || transcript.trim().length < 20) {
-      return json({ error: "Provide a transcript of at least 20 characters." }, 400, env);
-    }
-    if (transcript.length > MAX_TRANSCRIPT_CHARS) {
-      return json({ error: `Transcript too long (limit ${MAX_TRANSCRIPT_CHARS} chars).` }, 400, env);
-    }
-    if (!Array.isArray(items) || items.length === 0 || items.length > MAX_ITEMS) {
-      return json({ error: `Provide 1–${MAX_ITEMS} rubric items.` }, 400, env);
-    }
-    const cleanItems = items
-      .filter((it) => it && typeof it.key === "string")
-      .map((it) => ({
-        key: String(it.key),
-        label: typeof it.label === "string" ? it.label : it.key,
-        help: typeof it.help === "string" ? it.help : "",
-      }));
-    if (cleanItems.length === 0) {
-      return json({ error: "No valid rubric items provided." }, 400, env);
-    }
-
-    // ---- Build the prompt --------------------------------------------------
-    const rubricText = cleanItems
-      .map((it, i) => `${i + 1}. key="${it.key}" — ${it.label}: ${it.help}`)
-      .join("\n");
-
-    const system =
-      "You are an expert judge for a collegiate sales competition, scoring a recorded " +
-      "sales pitch against the Sales Competition judging rubric. You are given ONLY a " +
-      "written transcript. You cannot see or hear the pitch, so judge strictly from what " +
-      "the words reveal.\n\n" +
-      "For EACH rubric item you are given, assign an integer score from 0 to 10 and write " +
-      "ONE sentence of justification grounded in the transcript.\n\n" +
-      "Rules: do not award points for behavior only implied but never actually said; if an " +
-      "item's behavior never appears in the transcript, score it 0 and say it was not " +
-      "evidenced; score conservatively when evidence is thin; score every item you are " +
-      "given, and only those items. Use the exact key strings provided.";
-
-    const userText =
-      `Rubric items to score:\n${rubricText}\n\n` +
-      `=== TRANSCRIPT START ===\n${transcript}\n=== TRANSCRIPT END ===`;
-
-    const geminiBody = {
-      system_instruction: { parts: [{ text: system }] },
-      contents: [{ role: "user", parts: [{ text: userText }] }],
-      generationConfig: {
-        temperature: 0.2,
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: "OBJECT",
-          properties: {
-            scores: {
-              type: "ARRAY",
-              items: {
-                type: "OBJECT",
-                properties: {
-                  key: { type: "STRING" },
-                  score: { type: "INTEGER" },
-                  justification: { type: "STRING" },
-                },
-                required: ["key", "score", "justification"],
-              },
-            },
-          },
-          required: ["scores"],
-        },
-      },
-    };
-
-    // ---- Call Gemini (model fallback + retry on transient overload) --------
-    let parsed;
-    let usedModel = MODELS[0];
-    try {
-      let resp;
-      const RETRYABLE = new Set([429, 500, 502, 503]); // transient — worth retrying
-      outer: for (const m of MODELS) {
-        usedModel = m;
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent`;
-        for (let attempt = 0; attempt < 3; attempt++) {
-          resp = await fetch(url, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "x-goog-api-key": env.GEMINI_API_KEY },
-            body: JSON.stringify(geminiBody),
-          });
-          if (resp.status === 404) break; // model unavailable for this key — try the next model
-          if (resp.ok) break outer; // success
-          if (RETRYABLE.has(resp.status) && attempt < 2) {
-            await new Promise((r) => setTimeout(r, 800 * (attempt + 1))); // brief backoff, then retry same model
-            continue;
-          }
-          break outer; // non-retryable (e.g. 400/403), or out of retries
-        }
-      }
-
-      if (!resp.ok) {
-        const detail = await resp.text();
-        if (resp.status === 429 || resp.status === 503) {
-          return json({ error: "The AI is busy right now (free-tier limit) — wait a few seconds and click Score again." }, 503, env);
-        }
-        if (resp.status === 400 || resp.status === 403) {
-          return json({ error: "Gemini rejected the request — check the GEMINI_API_KEY secret." }, 502, env);
-        }
-        console.log("Gemini error", resp.status, detail);
-        return json({ error: `Gemini error ${resp.status}.` }, 502, env);
-      }
-
-      const result = await resp.json();
-      const cand = result.candidates?.[0];
-      if (!cand || cand.finishReason === "SAFETY") {
-        return json({ error: "The model declined to score this transcript." }, 422, env);
-      }
-      const text = (cand.content?.parts || []).map((p) => p.text || "").join("").trim();
-      parsed = extractJson(text);
-    } catch (err) {
-      console.log("scoreTranscript failed:", err && err.stack ? err.stack : String(err));
-      return json({ error: "Scoring failed. Try again." }, 500, env);
-    }
-
-    const scores = normalizeScores(parsed, cleanItems);
-    return json({ model: usedModel, scores }, 200, env);
+    if (data && data.mode === "coach") return handleCoach(data, env);
+    return handleScore(data, env);
   },
 };
+
+// ---- Mode: score a transcript ---------------------------------------------
+async function handleScore(data, env) {
+  const { transcript, items } = data || {};
+
+  if (typeof transcript !== "string" || transcript.trim().length < 20) {
+    return json({ error: "Provide a transcript of at least 20 characters." }, 400, env);
+  }
+  if (transcript.length > MAX_TRANSCRIPT_CHARS) {
+    return json({ error: `Transcript too long (limit ${MAX_TRANSCRIPT_CHARS} chars).` }, 400, env);
+  }
+  if (!Array.isArray(items) || items.length === 0 || items.length > MAX_ITEMS) {
+    return json({ error: `Provide 1–${MAX_ITEMS} rubric items.` }, 400, env);
+  }
+  const cleanItems = items
+    .filter((it) => it && typeof it.key === "string")
+    .map((it) => ({
+      key: String(it.key),
+      label: typeof it.label === "string" ? it.label : it.key,
+      help: typeof it.help === "string" ? it.help : "",
+    }));
+  if (cleanItems.length === 0) {
+    return json({ error: "No valid rubric items provided." }, 400, env);
+  }
+
+  const rubricText = cleanItems
+    .map((it, i) => `${i + 1}. key="${it.key}" — ${it.label}: ${it.help}`)
+    .join("\n");
+
+  const system =
+    "You are an expert judge for a collegiate sales competition, scoring a recorded " +
+    "sales pitch against the Sales Competition judging rubric. You are given ONLY a " +
+    "written transcript. You cannot see or hear the pitch, so judge strictly from what " +
+    "the words reveal.\n\n" +
+    "For EACH rubric item you are given, assign an integer score from 0 to 10 and write " +
+    "ONE sentence of justification grounded in the transcript.\n\n" +
+    "Rules: do not award points for behavior only implied but never actually said; if an " +
+    "item's behavior never appears in the transcript, score it 0 and say it was not " +
+    "evidenced; score conservatively when evidence is thin; score every item you are " +
+    "given, and only those items. Use the exact key strings provided.";
+
+  const userText =
+    `Rubric items to score:\n${rubricText}\n\n` +
+    `=== TRANSCRIPT START ===\n${transcript}\n=== TRANSCRIPT END ===`;
+
+  const geminiBody = {
+    system_instruction: { parts: [{ text: system }] },
+    contents: [{ role: "user", parts: [{ text: userText }] }],
+    generationConfig: {
+      temperature: 0.2,
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: "OBJECT",
+        properties: {
+          scores: {
+            type: "ARRAY",
+            items: {
+              type: "OBJECT",
+              properties: {
+                key: { type: "STRING" },
+                score: { type: "INTEGER" },
+                justification: { type: "STRING" },
+              },
+              required: ["key", "score", "justification"],
+            },
+          },
+        },
+        required: ["scores"],
+      },
+    },
+  };
+
+  let parsed;
+  try {
+    const { resp } = await callGemini(env, geminiBody);
+    if (!resp.ok) return geminiError(resp, env);
+    const result = await resp.json();
+    const cand = result.candidates?.[0];
+    if (!cand || cand.finishReason === "SAFETY") {
+      return json({ error: "The model declined to score this transcript." }, 422, env);
+    }
+    const text = (cand.content?.parts || []).map((p) => p.text || "").join("").trim();
+    parsed = extractJson(text);
+  } catch (err) {
+    console.log("scoreTranscript failed:", err && err.stack ? err.stack : String(err));
+    return json({ error: "Scoring failed. Try again." }, 500, env);
+  }
+
+  return json({ scores: normalizeScores(parsed, cleanItems) }, 200, env);
+}
+
+// ---- Mode: write a coaching narrative for one pitch -----------------------
+async function handleCoach(data, env) {
+  const name = typeof data.contestantName === "string" && data.contestantName ? data.contestantName : "the contestant";
+  const items = Array.isArray(data.items) ? data.items.slice(0, MAX_ITEMS) : [];
+  if (items.length === 0) {
+    return json({ error: "No scored items provided." }, 400, env);
+  }
+
+  const lines = items
+    .map((it) => {
+      const label = typeof it.label === "string" ? it.label : "item";
+      const score = Math.max(0, Math.min(10, Number(it.score) || 0));
+      const manual = it.manual ? " (judged live)" : "";
+      const note = typeof it.justification === "string" && it.justification ? ` — ${it.justification}` : "";
+      return `- ${label}: ${score}/10${manual}${note}`;
+    })
+    .join("\n");
+
+  const system =
+    "You are a blunt, highly experienced sales coach reviewing ONE contestant's pitch in a " +
+    "collegiate sales competition. You are given their rubric scores (0–10 each) and short notes. " +
+    "Write a SHORT coaching report of 3–5 sentences: lead with the biggest, most costly weaknesses " +
+    "and exactly how to fix each, then acknowledge one genuine strength only if it's real. Be direct " +
+    "and critical — no praise padding, no hedging, and do not just restate the scores. Address the " +
+    "contestant directly as 'you'. Return plain prose, no headings or bullet points.";
+
+  const userText = `Contestant: ${name}\n\nScored rubric:\n${lines}`;
+
+  const geminiBody = {
+    system_instruction: { parts: [{ text: system }] },
+    contents: [{ role: "user", parts: [{ text: userText }] }],
+    generationConfig: { temperature: 0.4 },
+  };
+
+  try {
+    const { resp } = await callGemini(env, geminiBody);
+    if (!resp.ok) return geminiError(resp, env);
+    const result = await resp.json();
+    const cand = result.candidates?.[0];
+    if (!cand || cand.finishReason === "SAFETY") {
+      return json({ error: "The model declined to write coaching for this pitch." }, 422, env);
+    }
+    const narrative = (cand.content?.parts || []).map((p) => p.text || "").join("").trim();
+    if (!narrative) return json({ error: "The model returned no coaching text." }, 502, env);
+    return json({ narrative }, 200, env);
+  } catch (err) {
+    console.log("coach failed:", err && err.stack ? err.stack : String(err));
+    return json({ error: "Coaching failed. Try again." }, 500, env);
+  }
+}
 
 // Pull a JSON object out of the model text, tolerating fences or stray prose.
 function extractJson(text) {

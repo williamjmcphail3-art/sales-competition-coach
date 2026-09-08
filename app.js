@@ -5,6 +5,8 @@ import {
   getDatabase,
   ref,
   push,
+  update,
+  remove,
   onValue,
   serverTimestamp,
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-database.js";
@@ -244,6 +246,16 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && !modal.hidden) closeDetail();
 });
 
+// Per-entry actions inside the modal (edit / delete / generate coaching).
+detailBody.addEventListener("click", (e) => {
+  const editBtn = e.target.closest(".edit-btn");
+  const delBtn = e.target.closest(".delete-btn");
+  const coachBtn = e.target.closest(".coach-btn");
+  if (editBtn) startEditScore(editBtn.dataset.scoreId);
+  else if (delBtn) deleteScore(delBtn.dataset.scoreId);
+  else if (coachBtn) generateCoaching(coachBtn, coachBtn.dataset.scoreId);
+});
+
 function closeDetail() {
   modal.hidden = true;
   openContestantId = null;
@@ -261,11 +273,11 @@ function refreshOpenDetail() {
 }
 
 function renderDetail(id) {
-  const entries = Object.values(latestScores)
-    .filter((s) => s && s.contestantId === id)
-    .sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0));
+  const entries = Object.entries(latestScores)
+    .filter(([, s]) => s && s.contestantId === id)
+    .sort((a, b) => (Number(b[1].createdAt) || 0) - (Number(a[1].createdAt) || 0));
 
-  const name = latestContestants[id]?.name || entries[0]?.contestantName || "Contestant";
+  const name = latestContestants[id]?.name || entries[0]?.[1].contestantName || "Contestant";
   detailTitle.textContent = name;
 
   if (entries.length === 0) {
@@ -273,10 +285,10 @@ function renderDetail(id) {
     return;
   }
 
-  detailBody.innerHTML = entries.map(renderEntry).join("");
+  detailBody.innerHTML = entries.map(([sid, s]) => renderEntry(sid, s)).join("");
 }
 
-function renderEntry(s) {
+function renderEntry(id, s) {
   const items = s.items || {};
   const justs = s.justifications || {};
   const when = Number(s.createdAt);
@@ -301,15 +313,128 @@ function renderEntry(s) {
     return `<div class="entry-cat"><h4>${escapeHtml(cat.category)}</h4>${rows}</div>`;
   }).join("");
 
+  const coach = s.coaching
+    ? `<div class="entry-coach">
+         <div class="entry-coach-head">AI coaching</div>
+         <div class="entry-coach-text">${escapeHtml(s.coaching)}</div>
+         <button type="button" class="linklike coach-btn" data-score-id="${escapeHtml(id)}">Regenerate</button>
+       </div>`
+    : `<div class="entry-coach">
+         <button type="button" class="secondary coach-btn" data-score-id="${escapeHtml(id)}">Generate AI coaching</button>
+       </div>`;
+
   return `<div class="entry">
     <div class="entry-head">
       <strong>${escapeHtml(s.judge || "Unknown judge")}</strong>
       · <span class="entry-total">${Number(s.total) || 0}/${MAX_TOTAL}</span>
       ${date ? `· <span class="muted">${escapeHtml(date)}</span>` : ""}
+      <span class="entry-actions">
+        <button type="button" class="linklike edit-btn" data-score-id="${escapeHtml(id)}">Edit</button>
+        <button type="button" class="linklike danger delete-btn" data-score-id="${escapeHtml(id)}">Delete</button>
+      </span>
     </div>
     ${s.notes ? `<div class="entry-notes">Notes: ${escapeHtml(s.notes)}</div>` : ""}
+    ${coach}
     ${cats}
   </div>`;
+}
+
+// ---- Edit / delete / AI coaching for a saved score -----------------------
+let editingScoreId = null;
+
+async function deleteScore(id) {
+  if (!id || !db) return;
+  const s = latestScores[id];
+  const who = s?.contestantName ? ` for ${s.contestantName}` : "";
+  if (!confirm(`Delete this saved score${who}? This can't be undone.`)) return;
+  try {
+    await remove(ref(db, "scores/" + id));
+    // onValue listeners re-render the board, insights, and open modal automatically.
+  } catch (err) {
+    alert("Delete failed: " + (err.message || "unknown error"));
+  }
+}
+
+async function generateCoaching(btn, id) {
+  const s = latestScores[id];
+  if (!s || !db) return;
+  if (!aiConfigured) {
+    alert("AI isn't set up yet (add your Worker URL in firebase-config.js).");
+    return;
+  }
+  const original = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "Generating…";
+  try {
+    const items = ALL_ITEMS.map((it) => ({
+      label: it.label,
+      score: Number.isFinite(Number(s.items?.[it.key])) ? Number(s.items[it.key]) : 0,
+      justification: (s.justifications && s.justifications[it.key]) || "",
+      manual: !!it.manualOnly,
+    }));
+    const body = JSON.stringify({ mode: "coach", contestantName: s.contestantName || "", items });
+    let resp, payload;
+    for (let attempt = 1; attempt <= 4; attempt++) {
+      resp = await fetch(aiEndpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+      });
+      payload = await resp.json().catch(() => ({}));
+      if (resp.ok) break;
+      if (resp.status === 503 && attempt < 4) {
+        btn.textContent = `AI busy — retrying (${attempt}/3)…`;
+        await new Promise((r) => setTimeout(r, 1500 * attempt));
+        continue;
+      }
+      throw new Error(payload.error || `Coaching service error ${resp.status}.`);
+    }
+    await update(ref(db, "scores/" + id), { coaching: payload.narrative || "" });
+    // The scores listener re-renders the open modal with the narrative shown.
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = original;
+    alert("Coaching failed: " + (err.message || "unknown error"));
+  }
+}
+
+function startEditScore(id) {
+  const s = latestScores[id];
+  if (!s) return;
+  editingScoreId = id;
+  document.querySelector('.tab[data-tab="score"]').click();
+  judgeInput.value = s.judge || "";
+  if (latestContestants[s.contestantId] || contestants[s.contestantId]) {
+    contestantSelect.value = s.contestantId;
+  }
+  for (const it of ALL_ITEMS) {
+    const input = document.getElementById(`score-${it.key}`);
+    if (input) input.value = Number.isFinite(Number(s.items?.[it.key])) ? String(s.items[it.key]) : "";
+    const just = document.getElementById(`just-${it.key}`);
+    if (just) just.textContent = (s.justifications && s.justifications[it.key]) || "";
+  }
+  document.getElementById("score-notes").value = s.notes || "";
+  recomputeTotal();
+  document.getElementById("save-score").textContent = "Update score";
+  document.getElementById("edit-banner-name").textContent = s.contestantName || "this contestant";
+  document.getElementById("edit-banner").hidden = false;
+  closeDetail();
+  setStatus(saveStatus, "", "");
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+function resetScoreForm() {
+  editingScoreId = null;
+  for (const it of ALL_ITEMS) {
+    const input = document.getElementById(`score-${it.key}`);
+    if (input) input.value = "";
+    const just = document.getElementById(`just-${it.key}`);
+    if (just) just.textContent = "";
+  }
+  document.getElementById("score-notes").value = "";
+  document.getElementById("save-score").textContent = "Save score";
+  document.getElementById("edit-banner").hidden = true;
+  recomputeTotal();
 }
 
 // ---------------------------------------------------------------------------
@@ -575,24 +700,37 @@ document.getElementById("rubric-form").addEventListener("submit", async (e) => {
 
   const saveBtn = document.getElementById("save-score");
   saveBtn.disabled = true;
-  setStatus(saveStatus, "Saving…", "");
+  setStatus(saveStatus, editingScoreId ? "Updating…" : "Saving…", "");
+  const contestantName =
+    contestants[contestantId]?.name || latestContestants[contestantId]?.name || "";
+  const notes = document.getElementById("score-notes").value.trim();
   try {
-    await push(ref(db, "scores"), {
-      contestantId,
-      contestantName: contestants[contestantId]?.name || "",
-      judge,
-      items,
-      justifications,
-      total,
-      notes: document.getElementById("score-notes").value.trim(),
-      createdAt: serverTimestamp(),
-    });
-    setStatus(saveStatus, `Saved — ${total}/${MAX_TOTAL}. Now on the leaderboard.`, "ok");
+    if (editingScoreId) {
+      // Update the existing record in place; drop stale AI coaching since scores changed.
+      await update(ref(db, "scores/" + editingScoreId), {
+        contestantId, contestantName, judge, items, justifications, total, notes,
+        updatedAt: serverTimestamp(),
+        coaching: null,
+      });
+      setStatus(saveStatus, `Updated — ${total}/${MAX_TOTAL}.`, "ok");
+      resetScoreForm();
+    } else {
+      await push(ref(db, "scores"), {
+        contestantId, contestantName, judge, items, justifications, total, notes,
+        createdAt: serverTimestamp(),
+      });
+      setStatus(saveStatus, `Saved — ${total}/${MAX_TOTAL}. Now on the leaderboard.`, "ok");
+    }
   } catch (err) {
-    setStatus(saveStatus, "Save failed: " + err.message, "error");
+    setStatus(saveStatus, (editingScoreId ? "Update" : "Save") + " failed: " + err.message, "error");
   } finally {
     saveBtn.disabled = false;
   }
+});
+
+document.getElementById("cancel-edit").addEventListener("click", () => {
+  resetScoreForm();
+  setStatus(saveStatus, "Edit canceled.", "");
 });
 
 // ---------------------------------------------------------------------------

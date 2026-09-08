@@ -107,6 +107,11 @@
             <textarea id="score-notes" rows="2" placeholder="Anything worth recording with this score…"></textarea>
           </label>
 
+          <div id="edit-banner" class="edit-banner" hidden>
+            Editing a saved score — <strong id="edit-banner-name"></strong>. Saving updates it in place.
+            <button type="button" id="cancel-edit" class="linklike">Cancel edit</button>
+          </div>
+
           <div class="save-bar">
             <div class="total-live">
               Total: <strong id="total-live">0</strong> / <span id="total-max">290</span>
