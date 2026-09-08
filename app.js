@@ -346,13 +346,27 @@ runAiBtn.addEventListener("click", async () => {
 
   try {
     const items = AI_ITEMS.map((it) => ({ key: it.key, label: it.label, help: it.help }));
-    const resp = await fetch(aiEndpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ transcript, items }),
-    });
-    const payload = await resp.json().catch(() => ({}));
-    if (!resp.ok) throw new Error(payload.error || `Scoring service error ${resp.status}.`);
+    const body = JSON.stringify({ transcript, items });
+
+    // The free AI tier occasionally returns 503 ("busy"); retry a few times so a
+    // judge rarely has to click twice. (The Worker also retries server-side.)
+    const MAX_TRIES = 4;
+    let resp, payload;
+    for (let attempt = 1; attempt <= MAX_TRIES; attempt++) {
+      resp = await fetch(aiEndpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+      });
+      payload = await resp.json().catch(() => ({}));
+      if (resp.ok) break;
+      if (resp.status === 503 && attempt < MAX_TRIES) {
+        setStatus(aiStatus, `AI is busy — retrying (${attempt}/${MAX_TRIES - 1})…`, "");
+        await new Promise((r) => setTimeout(r, 1500 * attempt));
+        continue;
+      }
+      throw new Error(payload.error || `Scoring service error ${resp.status}.`);
+    }
     const scores = payload.scores || {};
 
     let filled = 0;
