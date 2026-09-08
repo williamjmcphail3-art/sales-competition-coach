@@ -12,6 +12,7 @@
       <nav class="tabs">
         <button class="tab active" data-tab="leaderboard">Leaderboard</button>
         <button class="tab" data-tab="score">Score a pitch</button>
+        <button class="tab" data-tab="insights">Insights</button>
       </nav>
     </header>
 
@@ -114,6 +115,18 @@
             <span id="save-status" class="ai-status" role="status" aria-live="polite"></span>
           </div>
         </form>
+      </section>
+
+      <!-- ===================== INSIGHTS ===================== -->
+      <section id="insights" class="panel">
+        <div class="panel-head">
+          <h2>Insights</h2>
+          <p class="muted">
+            A running archive of every saved pitch, and the weaknesses that keep
+            recurring across the field — scored straight, not softened.
+          </p>
+        </div>
+        <div id="insights-container"></div>
       </section>
     </main>
 

@@ -171,6 +171,36 @@ table.board tbody tr.clickable:hover { background: #f4f8ff; }
 .entry-item .ei-manual { grid-column: 2; font-size: 12px; color: var(--warn); }
 .entry-empty { color: var(--muted); text-align: center; padding: 20px 0; }
 
+/* ---------- Insights ---------- */
+.ins-verdict { background: var(--card); border: 1px solid var(--line); border-left: 4px solid var(--warn); border-radius: 12px; padding: 16px 18px; box-shadow: var(--shadow); margin-bottom: 20px; }
+.ins-verdict-stat { font-size: 14px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.ins-verdict-stat strong { color: var(--ink); }
+.ins-verdict-text { margin: 6px 0 0; font-size: 16px; font-weight: 600; color: var(--ink); }
+.ins-h3 { font-size: 16px; margin: 24px 0 2px; }
+.ins-sub { margin: 0 0 12px; }
+
+.ins-weak { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; box-shadow: var(--shadow); }
+.ins-weak-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.ins-rank { font-weight: 700; color: #b42318; font-size: 14px; }
+.ins-weak-label { font-weight: 700; font-size: 15px; }
+.ins-weak-cat { font-size: 12px; color: var(--muted); }
+.ins-weak-avg { margin-left: auto; font-size: 20px; font-weight: 700; color: #b42318; font-variant-numeric: tabular-nums; }
+.ins-avg-max { font-size: 12px; font-weight: 500; color: var(--muted); margin-left: 2px; }
+.ins-weak-meta { font-size: 13px; color: var(--muted); margin: 4px 0 8px; }
+.ins-improve { font-size: 14px; color: var(--ink); background: #f0f7f2; border-radius: 6px; padding: 8px 10px; }
+.ins-improve-tag { display: inline-block; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: #fff; background: var(--ok); border-radius: 4px; padding: 1px 6px; margin-right: 6px; }
+.ins-evidence { margin: 8px 0 0; padding-left: 18px; }
+.ins-evidence li { font-size: 13px; color: var(--muted); margin-bottom: 3px; }
+.ins-ev-name { color: var(--ink); font-weight: 600; }
+
+.ins-cats { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px 18px; box-shadow: var(--shadow); margin-bottom: 8px; }
+.ins-cat { margin: 10px 0; }
+.ins-cat-top { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 4px; }
+.ins-cat-top span:last-child { font-variant-numeric: tabular-nums; font-weight: 600; }
+.ins-bar { height: 8px; background: var(--line); border-radius: 999px; overflow: hidden; }
+.ins-bar-fill { height: 100%; background: var(--brand); border-radius: 999px; }
+.ins-bar-fill.ins-bar-weak { background: #d92d20; }
+
 /* ---------- Config warning ---------- */
 .config-warning { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: #fef3f2; border: 1px solid #fda29b; color: #912018; padding: 12px 18px; border-radius: 10px; font-size: 14px; box-shadow: var(--shadow); max-width: 90%; }
 .config-warning code { background: #fff; padding: 1px 5px; border-radius: 4px; }

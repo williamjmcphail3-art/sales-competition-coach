@@ -167,11 +167,13 @@ if (db) {
   onValue(ref(db, "contestants"), (snap) => {
     latestContestants = snap.val() || {};
     renderBoard();
+    renderInsights();
     refreshOpenDetail();
   });
   onValue(ref(db, "scores"), (snap) => {
     latestScores = snap.val() || {};
     renderBoard();
+    renderInsights();
     refreshOpenDetail();
   });
 }
@@ -308,6 +310,153 @@ function renderEntry(s) {
     ${s.notes ? `<div class="entry-notes">Notes: ${escapeHtml(s.notes)}</div>` : ""}
     ${cats}
   </div>`;
+}
+
+// ---------------------------------------------------------------------------
+// Insights: archive of pitches + recurring weaknesses (deliberately critical)
+// ---------------------------------------------------------------------------
+const insightsContainer = document.getElementById("insights-container");
+
+function renderInsights() {
+  if (!insightsContainer) return;
+  const records = Object.values(latestScores || {}).filter((s) => s && s.contestantId);
+
+  if (records.length === 0) {
+    insightsContainer.innerHTML =
+      '<p class="muted center" style="padding:24px">No pitches saved yet. Once you save some scores, this tab breaks down where the field keeps falling short.</p>';
+    return;
+  }
+
+  const totals = records.map((r) => Number(r.total) || 0);
+  const avgTotal = totals.reduce((a, b) => a + b, 0) / totals.length;
+  const avgPct = Math.round((avgTotal / MAX_TOTAL) * 100);
+  const best = Math.max(...totals);
+  const worst = Math.min(...totals);
+
+  // Per-item stats. An item counts for a record only if it was actually
+  // evaluated — a justification exists, or a judge gave it a non-zero score —
+  // so "left blank" zeros don't masquerade as weaknesses.
+  const stats = {};
+  for (const it of ALL_ITEMS) stats[it.key] = { scores: [], weak: [] };
+  for (const r of records) {
+    const items = r.items || {};
+    const justs = r.justifications || {};
+    for (const it of ALL_ITEMS) {
+      const raw = Number(items[it.key]);
+      const hasJust = typeof justs[it.key] === "string" && justs[it.key].length > 0;
+      const evaluated = hasJust || (Number.isFinite(raw) && raw > 0);
+      if (!evaluated) continue;
+      const score = Math.max(0, Math.min(10, Number.isFinite(raw) ? raw : 0));
+      stats[it.key].scores.push(score);
+      if (score <= 4) {
+        stats[it.key].weak.push({
+          name: r.contestantName || "(unknown)",
+          score,
+          just: hasJust ? justs[it.key] : "",
+        });
+      }
+    }
+  }
+
+  // Recurring weaknesses: lowest-average items seen in enough pitches.
+  const minPitches = records.length >= 2 ? 2 : 1;
+  const ranked = ALL_ITEMS.map((it) => {
+    const s = stats[it.key];
+    const n = s.scores.length;
+    const avg = n ? s.scores.reduce((a, b) => a + b, 0) / n : null;
+    return { it, n, avg, weak: s.weak };
+  })
+    .filter((x) => x.n >= minPitches && x.avg !== null)
+    .sort((a, b) => a.avg - b.avg)
+    .slice(0, 6);
+
+  const cats = RUBRIC.map((cat) => {
+    const vals = [];
+    for (const it of cat.items) vals.push(...stats[it.key].scores);
+    const avg = vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
+    return { name: cat.category, pct: avg === null ? null : Math.round((avg / 10) * 100) };
+  });
+
+  let verdict;
+  if (avgPct >= 85) verdict = "Strong field — but don't get comfortable. The recurring gaps below are still costing real points.";
+  else if (avgPct >= 70) verdict = "A competent field with clear, fixable holes. The misses below are where points are leaking.";
+  else if (avgPct >= 55) verdict = "Middling. Contestants are leaving serious points on the table, and the patterns below are not one-offs.";
+  else verdict = "Weak across the board. These aren't nitpicks — the fundamentals below are missing from most pitches.";
+
+  const weaknessCards = ranked.length
+    ? ranked
+        .map((x, i) => {
+          const evidence = x.weak
+            .filter((w) => w.just)
+            .slice(0, 2)
+            .map((w) => `<li><span class="ins-ev-name">${escapeHtml(w.name)} (${w.score}/10):</span> ${escapeHtml(w.just)}</li>`)
+            .join("");
+          return `<div class="ins-weak">
+            <div class="ins-weak-head">
+              <span class="ins-rank">#${i + 1}</span>
+              <span class="ins-weak-label">${escapeHtml(x.it.label)}</span>
+              <span class="ins-weak-cat">${escapeHtml(x.it.category)}</span>
+              <span class="ins-weak-avg">${x.avg.toFixed(1)}<span class="ins-avg-max">/10 avg</span></span>
+            </div>
+            <div class="ins-weak-meta">Weak (≤4) in <strong>${x.weak.length}</strong> of ${x.n} pitches scored on this criterion.</div>
+            <div class="ins-improve"><span class="ins-improve-tag">Fix</span> ${escapeHtml(x.it.improve || "")}</div>
+            ${evidence ? `<ul class="ins-evidence">${evidence}</ul>` : ""}
+          </div>`;
+        })
+        .join("")
+    : '<p class="muted">Not enough data yet to flag recurring patterns.</p>';
+
+  const catBars = cats
+    .map((c) => {
+      const pct = c.pct === null ? 0 : c.pct;
+      const label = c.pct === null ? "—" : `${c.pct}%`;
+      const weakClass = c.pct !== null && c.pct < 60 ? " ins-bar-weak" : "";
+      return `<div class="ins-cat">
+        <div class="ins-cat-top"><span>${escapeHtml(c.name)}</span><span>${label}</span></div>
+        <div class="ins-bar"><div class="ins-bar-fill${weakClass}" style="width:${pct}%"></div></div>
+      </div>`;
+    })
+    .join("");
+
+  const archive = records
+    .slice()
+    .sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0))
+    .map((r) => {
+      const when = Number(r.createdAt);
+      const date = Number.isFinite(when) ? new Date(when).toLocaleDateString() : "";
+      return `<tr class="clickable" data-id="${escapeHtml(r.contestantId)}" title="View saved scores">
+        <td>${escapeHtml(r.contestantName || "(unknown)")}</td>
+        <td>${escapeHtml(r.judge || "")}</td>
+        <td class="num">${Number(r.total) || 0}/${MAX_TOTAL}</td>
+        <td class="muted">${escapeHtml(date)}</td>
+      </tr>`;
+    })
+    .join("");
+
+  insightsContainer.innerHTML = `
+    <div class="ins-verdict">
+      <div class="ins-verdict-stat"><strong>${records.length}</strong> pitches · avg <strong>${Math.round(avgTotal)}</strong>/${MAX_TOTAL} (${avgPct}%) · best ${best} · worst ${worst}</div>
+      <p class="ins-verdict-text">${escapeHtml(verdict)}</p>
+    </div>
+
+    <h3 class="ins-h3">Recurring weaknesses</h3>
+    <p class="muted ins-sub">Ranked by lowest average across pitches — the field's most consistent failures, each with how to fix it.</p>
+    ${weaknessCards}
+
+    <h3 class="ins-h3">Category performance</h3>
+    <div class="ins-cats">${catBars}</div>
+
+    <h3 class="ins-h3">All saved pitches</h3>
+    <div class="table-wrap">
+      <table class="board">
+        <thead><tr><th>Contestant</th><th>Judge</th><th class="num">Score</th><th>Date</th></tr></thead>
+        <tbody>${archive}</tbody>
+      </table>
+    </div>`;
+
+  insightsContainer.querySelectorAll("tr[data-id]").forEach((tr) => {
+    tr.addEventListener("click", () => openContestant(tr.dataset.id));
+  });
 }
 
 // ---------------------------------------------------------------------------
