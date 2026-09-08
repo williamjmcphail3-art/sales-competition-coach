@@ -120,26 +120,35 @@ export default {
       },
     };
 
-    // ---- Call Gemini -------------------------------------------------------
+    // ---- Call Gemini (model fallback + retry on transient overload) --------
     let parsed;
     let usedModel = MODELS[0];
     try {
       let resp;
-      for (const m of MODELS) {
+      const RETRYABLE = new Set([429, 500, 502, 503]); // transient — worth retrying
+      outer: for (const m of MODELS) {
         usedModel = m;
         const url = `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent`;
-        resp = await fetch(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "x-goog-api-key": env.GEMINI_API_KEY },
-          body: JSON.stringify(geminiBody),
-        });
-        if (resp.status !== 404) break; // model unavailable for this key — try the next
+        for (let attempt = 0; attempt < 3; attempt++) {
+          resp = await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "x-goog-api-key": env.GEMINI_API_KEY },
+            body: JSON.stringify(geminiBody),
+          });
+          if (resp.status === 404) break; // model unavailable for this key — try the next model
+          if (resp.ok) break outer; // success
+          if (RETRYABLE.has(resp.status) && attempt < 2) {
+            await new Promise((r) => setTimeout(r, 800 * (attempt + 1))); // brief backoff, then retry same model
+            continue;
+          }
+          break outer; // non-retryable (e.g. 400/403), or out of retries
+        }
       }
 
       if (!resp.ok) {
         const detail = await resp.text();
-        if (resp.status === 429) {
-          return json({ error: "Gemini free-tier rate limit hit — wait a moment and retry." }, 429, env);
+        if (resp.status === 429 || resp.status === 503) {
+          return json({ error: "The AI is busy right now (free-tier limit) — wait a few seconds and click Score again." }, 503, env);
         }
         if (resp.status === 400 || resp.status === 403) {
           return json({ error: "Gemini rejected the request — check the GEMINI_API_KEY secret." }, 502, env);
