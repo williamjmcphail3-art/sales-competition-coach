@@ -11,9 +11,54 @@
 // Get a free key at https://console.groq.com/keys. It never reaches the browser.
 
 const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
-// Groq-hosted models, tried in order — first one this key/account supports is used.
-const MODELS = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"];
+const GROQ_MODELS_URL = "https://api.groq.com/openai/v1/models";
+// Fallback Groq model ids (used only if live discovery fails), best first.
+const MODELS = [
+  "llama-3.3-70b-versatile",
+  "llama-3.1-8b-instant",
+  "llama3-70b-8192",
+  "llama3-8b-8192",
+  "gemma2-9b-it",
+];
 const REQUEST_TIMEOUT_MS = 25000; // hard cap per call so it can never hang
+
+// Model id discovered from the account, cached for this Worker isolate's life.
+let CACHED_MODEL = null;
+
+// Ask Groq which models this key can actually use and pick a good chat model,
+// falling back to the hardcoded list if discovery fails.
+async function pickModels(env) {
+  const preferred = [
+    "llama-3.3-70b-versatile", "llama-3.1-70b-versatile", "llama-3.1-8b-instant",
+    "llama3-70b-8192", "llama3-8b-8192", "gemma2-9b-it",
+  ];
+  const isChat = (id) => !/(whisper|guard|tts|embed|embedding)/i.test(id);
+  if (CACHED_MODEL) return [CACHED_MODEL, ...MODELS.filter((m) => m !== CACHED_MODEL)];
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+    const r = await fetch(GROQ_MODELS_URL, {
+      headers: { Authorization: `Bearer ${env.GROQ_API_KEY}` },
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+    if (r.ok) {
+      const ids = ((await r.json()).data || []).map((m) => m.id).filter(Boolean);
+      const chosen =
+        preferred.find((p) => ids.includes(p)) ||
+        ids.find((id) => /llama/i.test(id) && isChat(id)) ||
+        ids.find(isChat) ||
+        ids[0];
+      if (chosen) {
+        CACHED_MODEL = chosen;
+        return [chosen, ...ids.filter((id) => id !== chosen && isChat(id))].slice(0, 4);
+      }
+    }
+  } catch {
+    // fall through to the hardcoded list
+  }
+  return MODELS;
+}
 
 const MAX_TRANSCRIPT_CHARS = 120_000;
 const MAX_ITEMS = 40;
@@ -40,9 +85,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // failed to connect, or a Response (possibly !ok) for the caller to handle.
 async function callGroq(env, { system, user, wantJson }) {
   const RETRYABLE = new Set([429, 500, 502, 503]);
+  const candidates = await pickModels(env);
   let last = null;
-  let model = MODELS[0];
-  for (const m of MODELS) {
+  let model = candidates[0];
+  for (const m of candidates) {
     model = m;
     for (let attempt = 0; attempt < 2; attempt++) {
       const controller = new AbortController();
@@ -76,7 +122,10 @@ async function callGroq(env, { system, user, wantJson }) {
       if (resp) {
         last = resp;
         if (resp.status === 401 || resp.status === 403) return { resp, model: m }; // key problem — stop
-        if (resp.status === 404 || resp.status === 400) break; // model unavailable — next model
+        if (resp.status === 404 || resp.status === 400) {
+          if (m === CACHED_MODEL) CACHED_MODEL = null; // stale pick — rediscover next time
+          break; // model unavailable — next model
+        }
         if (RETRYABLE.has(resp.status) && attempt < 1) {
           await sleep(700);
           continue;
