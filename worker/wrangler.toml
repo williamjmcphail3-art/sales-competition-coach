@@ -1,7 +1,7 @@
 # Cloudflare Worker config. Deploy from this folder with:  npx wrangler deploy
 #
-# Before first deploy, set your Gemini key as a secret (never committed):
-#   npx wrangler secret put GEMINI_API_KEY
+# Before first deploy, set your Groq key as a secret (never committed):
+#   npx wrangler secret put GROQ_API_KEY     (get a free key at https://console.groq.com/keys)
 #
 # Optional: lock the Worker to your site's origin instead of allowing any page.
 # Set ALLOWED_ORIGIN to your GitHub Pages URL (no trailing slash), e.g.

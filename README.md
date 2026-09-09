@@ -10,8 +10,8 @@ Claude/Pro. They just open the website and click.
 
 - **Frontend:** static HTML/JS on **GitHub Pages** (free).
 - **Database:** **Firebase Realtime Database** on the free **Spark** plan (the shared, live leaderboard).
-- **AI scoring:** a **Cloudflare Worker** (free tier) that calls **Google Gemini** (free tier).
-  Your Gemini API key is a Worker secret and is **never sent to the browser**.
+- **AI scoring:** a **Cloudflare Worker** (free tier) that calls **Groq** (free tier; fast Llama models).
+  Your Groq API key is a Worker secret and is **never sent to the browser**.
 
 The rubric is the official **Sales Competition judging rubric** — 29 sub-criteria across
 6 categories, 290 points.
@@ -26,12 +26,11 @@ Everything here runs on free tiers, so a normal competition costs **$0**:
 |---|---|---|
 | Website | GitHub Pages | Free |
 | Leaderboard + manual scoring | Firebase Realtime Database (Spark) | Free |
-| AI transcript scoring | Cloudflare Workers + Google Gemini | Free tiers |
+| AI transcript scoring + coaching | Cloudflare Workers + Groq | Free tiers |
 
-The only limits are Gemini's **free-tier rate limits** (plenty for judging a competition;
-if you hammer it, calls briefly return "rate limit hit — retry"). No credit card required
-for any of it. If you ever outgrow the free tier, you can raise limits on the Gemini side
-without changing this code.
+The only limits are Groq's **free-tier rate limits** (generous and fast — fine for judging a
+competition). No credit card required for any of it. If you ever outgrow the free tier, you
+can add billing on the Groq side without changing this code.
 
 ---
 
@@ -48,7 +47,7 @@ sales-scoring/
 ├── .firebaserc           # your Firebase project id (you fill this in)
 ├── database.rules.json   # Realtime Database security rules
 └── worker/
-    ├── worker.js         # the Cloudflare Worker that calls Gemini
+    ├── worker.js         # the Cloudflare Worker that calls Groq (scoring + coaching)
     └── wrangler.toml
 ```
 
@@ -74,10 +73,10 @@ the input (and saved with the score).
 You'll need [Node.js](https://nodejs.org) and the Firebase CLI (`npm install -g firebase-tools`).
 Wrangler (the Cloudflare CLI) is run on demand via `npx`, so there's nothing to install for it.
 
-### 1. Get a free Google Gemini API key
+### 1. Get a free Groq API key
 
-1. Go to **Google AI Studio** → https://aistudio.google.com/apikey
-2. Sign in with a Google account and click **Create API key** (free — no billing needed).
+1. Go to **Groq Console** → https://console.groq.com/keys
+2. Sign in (free — no billing needed) and click **Create API Key**.
 3. Copy the key. You'll store it as a Worker secret in step 3 (**don't** put it in any file).
 
 ### 2. Create the Firebase project (free Spark plan)
@@ -95,12 +94,14 @@ No Blaze / no billing needed — the database runs on the free tier.
 ### 3. Deploy the Cloudflare Worker (the AI backend)
 
 1. Create a free Cloudflare account: https://dash.cloudflare.com/sign-up
-2. From the `worker/` folder, log in and store your Gemini key as a secret:
+2. From the `worker/` folder, log in and store your Groq key as a secret:
    ```bash
    npx wrangler login
-   npx wrangler secret put GEMINI_API_KEY
+   npx wrangler secret put GROQ_API_KEY
    ```
-   Paste your Gemini key when prompted — it's stored on Cloudflare, never in the browser or git.
+   Paste your Groq key when prompted — it's stored on Cloudflare, never in the browser or git.
+   (No CLI? You can paste the Worker code and add the `GROQ_API_KEY` secret directly in the
+   Cloudflare dashboard: the Worker → **Settings → Variables and Secrets**.)
 3. Deploy:
    ```bash
    npx wrangler deploy
@@ -137,7 +138,7 @@ Defaults are permissive so it works immediately. For a real competition:
 
 - **Lock the Worker to your site.** In `worker/wrangler.toml` set `ALLOWED_ORIGIN` to your
   GitHub Pages URL and redeploy, so only your page can call the AI (stops strangers using your
-  Gemini quota).
+  Groq quota).
 - **Lock the database.** `database.rules.json` currently allows public read/write. Add
   [Firebase Authentication](https://firebase.google.com/docs/auth) (even a shared judge login)
   and require `auth != null` in the rules.
@@ -147,8 +148,8 @@ Defaults are permissive so it works immediately. For a real competition:
 ## Changing things
 
 - **AI model:** edit the `MODELS` list in `worker/worker.js` — the Worker tries them in
-  order and uses the first one your API key supports. Model list:
-  https://ai.google.dev/gemini-api/docs/models
+  order and uses the first one your Groq account supports. Model list:
+  https://console.groq.com/docs/models
 - **Rubric wording, points, or what's AI-scored:** edit `rubric.js` — the single source of
   truth for both the inputs the page renders and the items sent to the AI.
 
