@@ -212,6 +212,33 @@ table.board tbody tr.clickable:hover { background: #f4f8ff; }
 .ins-bar-fill { height: 100%; background: var(--brand); border-radius: 999px; }
 .ins-bar-fill.ins-bar-weak { background: #d92d20; }
 
+/* Per-competitor breakdown */
+.ci { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; margin-bottom: 16px; box-shadow: var(--shadow); }
+.ci-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; cursor: pointer; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+.ci-head:hover .ci-name { text-decoration: underline; }
+.ci-rank { font-size: 18px; }
+.ci-name { font-size: 18px; font-weight: 700; }
+.ci-total { margin-left: auto; font-size: 20px; font-weight: 700; color: var(--brand-dark); font-variant-numeric: tabular-nums; }
+.ci-total-max { font-size: 12px; font-weight: 500; color: var(--muted); }
+.ci-meta { flex-basis: 100%; font-size: 12px; color: var(--muted); }
+.ci-coach { margin: 12px 0; font-size: 14px; line-height: 1.5; background: #f4f8ff; border-left: 3px solid var(--brand); border-radius: 4px; padding: 8px 12px; }
+.ci-strong { margin: 10px 0; font-size: 13px; color: var(--ok); }
+.ci-weak-h { margin: 14px 0 8px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); font-weight: 700; }
+.ci-item { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; }
+.ci-item-top { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.ci-score { min-width: 30px; text-align: center; font-weight: 700; font-size: 15px; border-radius: 6px; padding: 2px 6px; font-variant-numeric: tabular-nums; }
+.ci-score.bad { background: #fee4e2; color: #b42318; }
+.ci-score.mid { background: #fef0c7; color: #b45309; }
+.ci-score.ok { background: #dcfae6; color: #067647; }
+.ci-label { font-weight: 600; font-size: 15px; }
+.ci-cat { font-size: 12px; color: var(--muted); }
+.ci-said { font-size: 14px; margin: 6px 0 4px; line-height: 1.45; }
+.ci-fix { font-size: 14px; line-height: 1.45; }
+.ci-tag { display: inline-block; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: #fff; background: var(--ink-soft); border-radius: 4px; padding: 1px 6px; margin-right: 4px; vertical-align: middle; }
+.ci-tag.fix { background: var(--ok); }
+.ci-tag.coach { background: var(--brand); }
+.ci-tag.live { background: var(--warn); }
+
 /* ---------- Config warning ---------- */
 .config-warning { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: #fef3f2; border: 1px solid #fda29b; color: #912018; padding: 12px 18px; border-radius: 10px; font-size: 14px; box-shadow: var(--shadow); max-width: 90%; }
 .config-warning code { background: #fff; padding: 1px 5px; border-radius: 4px; }
