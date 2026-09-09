@@ -442,6 +442,19 @@ function resetScoreForm() {
 // ---------------------------------------------------------------------------
 const insightsContainer = document.getElementById("insights-container");
 
+// One delegated handler (survives re-renders): coaching buttons + name clicks.
+if (insightsContainer) {
+  insightsContainer.addEventListener("click", (e) => {
+    const coachBtn = e.target.closest(".coach-btn");
+    if (coachBtn) {
+      generateCoaching(coachBtn, coachBtn.dataset.scoreId);
+      return;
+    }
+    const head = e.target.closest("[data-id]");
+    if (head) openContestant(head.dataset.id);
+  });
+}
+
 // Pull the evaluated items from one saved record (skips "left blank" zeros).
 function evaluatedItems(record) {
   const items = record.items || {};
@@ -476,14 +489,19 @@ function renderInsights() {
   else verdict = "Weak across the board — the fundamentals below are missing from most pitches.";
 
   // Group by contestant; the deep dive uses each competitor's most recent pitch.
+  // Keep the score-record id (sid) so we can save AI coaching to that record.
   const byId = {};
-  for (const r of records) (byId[r.contestantId] ||= []).push(r);
+  for (const [sid, s] of Object.entries(latestScores)) {
+    if (!s || !s.contestantId) continue;
+    (byId[s.contestantId] ||= []).push({ sid, s });
+  }
   const competitors = Object.entries(byId)
     .map(([id, recs]) => {
-      recs.sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0));
-      const latest = recs[0];
+      recs.sort((a, b) => (Number(b.s.createdAt) || 0) - (Number(a.s.createdAt) || 0));
+      const latest = recs[0].s;
       return {
         id,
+        latestId: recs[0].sid,
         name: latestContestants[id]?.name || latest.contestantName || "(unknown)",
         latest,
         count: recs.length,
@@ -523,8 +541,9 @@ function renderInsights() {
         : '<p class="muted">No scored items on this pitch yet.</p>';
 
       const coachHtml = c.latest.coaching
-        ? `<div class="ci-coach"><span class="ci-tag coach">Coach's take</span> ${escapeHtml(c.latest.coaching)}</div>`
-        : "";
+        ? `<div class="ci-coach"><span class="ci-tag coach">Coach's take</span> ${escapeHtml(c.latest.coaching)}
+             <button type="button" class="linklike coach-btn" data-score-id="${escapeHtml(c.latestId)}">Regenerate</button></div>`
+        : `<div class="ci-coachrow"><button type="button" class="secondary coach-btn" data-score-id="${escapeHtml(c.latestId)}">Generate AI coaching</button></div>`;
       const strongHtml = strongest
         ? `<div class="ci-strong">Strongest: <strong>${escapeHtml(strongest.it.label)}</strong> (${strongest.score}/10)${strongest.just ? ` — ${escapeHtml(strongest.just)}` : ""}</div>`
         : "";
@@ -551,10 +570,6 @@ function renderInsights() {
     </div>
     <p class="muted ins-sub">Each competitor below: their weakest criteria, exactly what was said (the AI's or judge's note), and how to improve. Click a name for the full scorecard.</p>
     ${sections}`;
-
-  insightsContainer.querySelectorAll("[data-id]").forEach((el) => {
-    el.addEventListener("click", () => openContestant(el.dataset.id));
-  });
 }
 
 // ---------------------------------------------------------------------------

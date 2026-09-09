@@ -222,6 +222,8 @@ table.board tbody tr.clickable:hover { background: #f4f8ff; }
 .ci-total-max { font-size: 12px; font-weight: 500; color: var(--muted); }
 .ci-meta { flex-basis: 100%; font-size: 12px; color: var(--muted); }
 .ci-coach { margin: 12px 0; font-size: 14px; line-height: 1.5; background: #f4f8ff; border-left: 3px solid var(--brand); border-radius: 4px; padding: 8px 12px; }
+.ci-coachrow { margin: 12px 0; }
+.ci-coach .coach-btn { margin-left: 6px; }
 .ci-strong { margin: 10px 0; font-size: 13px; color: var(--ok); }
 .ci-weak-h { margin: 14px 0 8px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); font-weight: 700; }
 .ci-item { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; }
