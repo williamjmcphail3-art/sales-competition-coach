@@ -108,7 +108,8 @@ async function callGroq(env, { system, user, wantJson }) {
               { role: "user", content: user },
             ],
             temperature: wantJson ? 0.2 : 0.4,
-            ...(wantJson ? { response_format: { type: "json_object" } } : {}),
+            // Note: not all Groq models accept response_format json_object, so we
+            // rely on the prompt ("return ONLY JSON") + tolerant parsing instead.
           }),
           signal: controller.signal,
         });
