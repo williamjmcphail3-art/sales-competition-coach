@@ -608,7 +608,20 @@ runAiBtn.addEventListener("click", async () => {
 
   try {
     const items = AI_ITEMS.map((it) => ({ key: it.key, label: it.label, help: it.help }));
-    const body = JSON.stringify({ transcript, items });
+
+    // The free AI tier caps how much text it accepts per request, so trim very long
+    // transcripts — keep the opening and the closing (where most rubric points live)
+    // and drop the middle.
+    const SAFE_CHARS = 14000;
+    let sendTranscript = transcript;
+    let trimmed = false;
+    if (transcript.length > SAFE_CHARS) {
+      const head = transcript.slice(0, 9000).trim();
+      const tail = transcript.slice(-4500).trim();
+      sendTranscript = `${head}\n\n[… middle of the transcript omitted to fit the free AI limit …]\n\n${tail}`;
+      trimmed = true;
+    }
+    const body = JSON.stringify({ transcript: sendTranscript, items });
 
     // The free AI tier occasionally returns 503 ("busy"); retry a few times so a
     // judge rarely has to click twice. (The Worker also retries server-side.)
@@ -644,9 +657,12 @@ runAiBtn.addEventListener("click", async () => {
     recomputeTotal();
 
     const manualCount = ALL_ITEMS.length - AI_ITEMS.length;
+    const trimNote = trimmed
+      ? " Your transcript was long, so only its opening and closing were scored (the middle was trimmed to fit the free tier) — double-check these."
+      : "";
     setStatus(
       aiStatus,
-      `Filled ${filled} AI-scored items. ${manualCount} non-verbal items left for you to score. Adjust anything, then Save.`,
+      `Filled ${filled} AI-scored items. ${manualCount} non-verbal items left for you to score. Adjust anything, then Save.${trimNote}`,
       "ok",
     );
   } catch (err) {
