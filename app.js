@@ -587,6 +587,71 @@ document.getElementById("transcript-file").addEventListener("change", (e) => {
 });
 
 // ---------------------------------------------------------------------------
+// Transcript condensing (to fit the free AI request-size cap)
+// ---------------------------------------------------------------------------
+// Keep the SELLER's lines in full (that's what the rubric scores) and shorten the
+// buyer's replies. Only if it's still too long do we trim the middle as a last resort.
+function headTail(t, target) {
+  if (t.length <= target) return t;
+  const head = Math.floor(target * 0.65);
+  const tail = Math.max(0, target - head - 70);
+  return `${t.slice(0, head).trim()}\n\n[… middle omitted to fit the free AI limit …]\n\n${t.slice(-tail).trim()}`;
+}
+
+function condenseTranscript(transcript, targetChars) {
+  // Find "Speaker:" labels and slice the transcript into turns.
+  const labelRe = /(^|\n)[ \t]*([A-Za-z][A-Za-z0-9 ._'"\-]{0,24}):[ \t]/g;
+  const marks = [];
+  let m;
+  while ((m = labelRe.exec(transcript)) !== null) {
+    marks.push({
+      index: m.index + (m[1] ? m[1].length : 0),
+      speaker: m[2].trim(),
+      textStart: labelRe.lastIndex,
+    });
+  }
+  if (marks.length < 3) return { text: headTail(transcript, targetChars), how: "middle" };
+
+  const turns = [];
+  if (marks[0].index > 0) turns.push({ speaker: null, text: transcript.slice(0, marks[0].index) });
+  for (let i = 0; i < marks.length; i++) {
+    const end = i + 1 < marks.length ? marks[i + 1].index : transcript.length;
+    turns.push({ speaker: marks[i].speaker, text: transcript.slice(marks[i].textStart, end) });
+  }
+
+  const totals = {};
+  for (const t of turns) if (t.speaker) totals[t.speaker] = (totals[t.speaker] || 0) + t.text.length;
+  const speakers = Object.keys(totals);
+  const isBuyer = (s) => /buyer|customer|prospect|client|purchaser/i.test(s);
+  const isSeller = (s) => /rep\b|sales|seller|present|contestant|vendor|account/i.test(s);
+
+  // Decide whose lines to shorten: buyers if labelled; else everyone who isn't the
+  // seller; else (names only) everyone but the person who talks the most (the seller).
+  let shorten;
+  const buyers = speakers.filter(isBuyer);
+  if (buyers.length) shorten = new Set(buyers);
+  else if (speakers.some(isSeller)) shorten = new Set(speakers.filter((s) => !isSeller(s)));
+  else {
+    const top = speakers.slice().sort((a, b) => totals[b] - totals[a])[0];
+    shorten = new Set(speakers.filter((s) => s !== top));
+  }
+
+  const SNIP = 90; // keep buyer replies to ~a sentence for context
+  const rebuilt = turns
+    .map((t) => {
+      const text = t.text.trim();
+      if (t.speaker && shorten.has(t.speaker)) {
+        return `${t.speaker}: ${text.length > SNIP ? text.slice(0, SNIP).trim() + "…" : text}`;
+      }
+      return (t.speaker ? `${t.speaker}: ` : "") + text;
+    })
+    .join("\n");
+
+  if (rebuilt.length <= targetChars) return { text: rebuilt, how: "buyer" };
+  return { text: headTail(rebuilt, targetChars), how: "buyer+middle" };
+}
+
+// ---------------------------------------------------------------------------
 // AI scoring
 // ---------------------------------------------------------------------------
 const runAiBtn = document.getElementById("run-ai");
@@ -609,17 +674,17 @@ runAiBtn.addEventListener("click", async () => {
   try {
     const items = AI_ITEMS.map((it) => ({ key: it.key, label: it.label, help: it.help }));
 
-    // The free AI tier caps how much text it accepts per request, so trim very long
-    // transcripts — keep the opening and the closing (where most rubric points live)
-    // and drop the middle.
+    // The free AI tier caps request size. Condense long transcripts by shortening the
+    // buyer's replies (keeping the seller's lines whole, since those are what's scored).
     const SAFE_CHARS = 14000;
     let sendTranscript = transcript;
     let trimmed = false;
+    let trimHow = "";
     if (transcript.length > SAFE_CHARS) {
-      const head = transcript.slice(0, 9000).trim();
-      const tail = transcript.slice(-4500).trim();
-      sendTranscript = `${head}\n\n[… middle of the transcript omitted to fit the free AI limit …]\n\n${tail}`;
+      const c = condenseTranscript(transcript, SAFE_CHARS);
+      sendTranscript = c.text;
       trimmed = true;
+      trimHow = c.how;
     }
     const body = JSON.stringify({ transcript: sendTranscript, items });
 
@@ -657,9 +722,14 @@ runAiBtn.addEventListener("click", async () => {
     recomputeTotal();
 
     const manualCount = ALL_ITEMS.length - AI_ITEMS.length;
-    const trimNote = trimmed
-      ? " Your transcript was long, so only its opening and closing were scored (the middle was trimmed to fit the free tier) — double-check these."
-      : "";
+    let trimNote = "";
+    if (trimmed && trimHow === "buyer") {
+      trimNote = " Your transcript was long, so the buyer's replies were condensed — the seller's lines were kept in full.";
+    } else if (trimmed && trimHow === "buyer+middle") {
+      trimNote = " Your transcript was very long; the buyer's replies were condensed and some middle content trimmed — double-check the scores.";
+    } else if (trimmed) {
+      trimNote = " Your transcript was long and had no clear speaker labels, so the middle was trimmed — double-check the scores.";
+    }
     setStatus(
       aiStatus,
       `Filled ${filled} AI-scored items. ${manualCount} non-verbal items left for you to score. Adjust anything, then Save.${trimNote}`,
