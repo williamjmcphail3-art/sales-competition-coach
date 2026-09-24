@@ -29,10 +29,11 @@ let CACHED_MODEL = null;
 // falling back to the hardcoded list if discovery fails.
 async function pickModels(env) {
   const preferred = [
-    "llama-3.3-70b-versatile", "llama-3.1-70b-versatile", "llama-3.1-8b-instant",
-    "llama3-70b-8192", "llama3-8b-8192", "gemma2-9b-it",
+    "llama-3.3-70b-versatile", "llama-3.1-8b-instant", "llama-3.1-70b-versatile",
+    "llama3-70b-8192", "gemma2-9b-it",
   ];
   const isChat = (id) => !/(whisper|guard|tts|embed|embedding)/i.test(id);
+  const ctx = (m) => Number(m.context_window) || 0;
   if (CACHED_MODEL) return [CACHED_MODEL, ...MODELS.filter((m) => m !== CACHED_MODEL)];
   try {
     const controller = new AbortController();
@@ -43,15 +44,21 @@ async function pickModels(env) {
     });
     clearTimeout(timer);
     if (r.ok) {
-      const ids = ((await r.json()).data || []).map((m) => m.id).filter(Boolean);
-      const chosen =
-        preferred.find((p) => ids.includes(p)) ||
-        ids.find((id) => /llama/i.test(id) && isChat(id)) ||
-        ids.find(isChat) ||
-        ids[0];
-      if (chosen) {
-        CACHED_MODEL = chosen;
-        return [chosen, ...ids.filter((id) => id !== chosen && isChat(id))].slice(0, 4);
+      const models = ((await r.json()).data || []).filter(
+        (m) => m && typeof m.id === "string" && isChat(m.id) && m.active !== false,
+      );
+      // Long transcripts 400 on small-context models, so prefer big-context ones.
+      const big = models.filter((m) => ctx(m) >= 32000);
+      const pool = big.length ? big : models;
+      const rank = (id) => {
+        const i = preferred.indexOf(id);
+        return i < 0 ? 999 : i;
+      };
+      pool.sort((a, b) => rank(a.id) - rank(b.id) || ctx(b) - ctx(a));
+      const ids = pool.map((m) => m.id);
+      if (ids.length) {
+        CACHED_MODEL = ids[0];
+        return ids.slice(0, 4);
       }
     }
   } catch {
@@ -144,17 +151,29 @@ async function callGroq(env, { system, user, wantJson }) {
 }
 
 // Turn a failed/absent Response into a friendly JSON error Response.
-function backendError(resp, env) {
+async function backendError(resp, env) {
   if (!resp) {
     return json({ error: "The AI didn't respond in time — wait a few seconds and try again." }, 504, env);
   }
+  let detail = "";
+  try {
+    detail = ((await resp.text()) || "").slice(0, 300);
+  } catch {}
+  const low = detail.toLowerCase();
   if (resp.status === 429) {
     return json({ error: "The AI is busy right now — wait a few seconds and try again." }, 503, env);
   }
   if (resp.status === 401 || resp.status === 403) {
     return json({ error: "The AI key is missing or invalid — check the GROQ_API_KEY secret." }, 502, env);
   }
-  return json({ error: `AI service error ${resp.status}.` }, 502, env);
+  if (
+    low.includes("context") || low.includes("too large") ||
+    low.includes("tokens per") || low.includes("reduce the length") ||
+    low.includes("maximum context")
+  ) {
+    return json({ error: "This transcript is too long for the free AI tier — trim it (try the first ~12,000 characters) and score again." }, 413, env);
+  }
+  return json({ error: `AI service error ${resp.status}.`, detail }, 502, env);
 }
 
 // Pull the assistant text out of a Groq (OpenAI-shaped) chat completion.
@@ -236,7 +255,7 @@ async function handleScore(data, env) {
   let parsed;
   try {
     const { resp } = await callGroq(env, { system, user, wantJson: true });
-    if (!resp || !resp.ok) return backendError(resp, env);
+    if (!resp || !resp.ok) return await backendError(resp, env);
     parsed = extractJson(await groqText(resp));
   } catch (err) {
     console.log("scoreTranscript failed:", err && err.stack ? err.stack : String(err));
@@ -276,7 +295,7 @@ async function handleCoach(data, env) {
 
   try {
     const { resp } = await callGroq(env, { system, user, wantJson: false });
-    if (!resp || !resp.ok) return backendError(resp, env);
+    if (!resp || !resp.ok) return await backendError(resp, env);
     const narrative = await groqText(resp);
     if (!narrative) return json({ error: "The model returned no coaching text." }, 502, env);
     return json({ narrative }, 200, env);
